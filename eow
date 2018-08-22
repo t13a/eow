@@ -1,0 +1,171 @@
+#!/bin/bash
+
+set -euo pipefail
+
+source "${BASH_SOURCE[0]}.conf"
+
+function colorize() {
+    if [ -z "${COLORLIZE}" ]
+    then
+        cat -
+        return 0
+    fi
+
+    local color_default='[0m'
+    local color_index=0
+    local color_index_max=$((${#EOW_COLORS[@]} - 1))
+    local esc=$(printf '\033')
+    local keyword
+    local sed_args=(sed)
+
+    for keyword in "${@}"
+    do
+        color=$(printf "${EOW_COLORS[${color_index}]}")
+        sed_args+=(-e "s/\(${keyword}\)/${esc}${color}\1${esc}${color_default}/gI")
+
+        if [ ${color_index} -lt ${color_index_max} ]
+        then
+            color_index=$((color_index + 1))
+        else
+            color_index=0
+        fi
+    done
+
+    "${sed_args[@]}"
+}
+
+function encode() {
+    sed \
+    -e 's/ /+/g' \
+    -e 's/&/%26/g' \
+    -e 's/?/%3F/g'
+}
+
+function help() {
+    cat << EOF
+$0 [OPTION]... KEYWORD
+
+Options:
+    -c          colorlize keywords
+    -h          show help
+    -o FILE     output to file
+    -p PAGE     set page number
+EOF
+}
+
+function navigate() {
+
+    function read_char() {
+        local next="$(echo "${1}" | grep "${EOW_NAVIGATE_NEXT}")"
+        local prev="$(echo "${1}" | grep "${EOW_NAVIGATE_PREV}")"
+        local char
+
+        while [ -z "${char:-}" ]
+        do
+            if [ -n "${next}" -a -n "${prev}" ]
+            then
+                echo "Forward to $((PAGE + 1)) or back to $((PAGE - 1)) or quit? (F/b/q)" >&2
+            elif [ -n "${next}" ]
+            then
+                echo "Forward to $((PAGE + 1)) or quit? (F/q)" >&2
+            elif [ -n "${prev}" ]
+            then
+                echo "Quit or back to $((PAGE - 1))? (b/Q)" >&2
+            else
+                return 1
+            fi
+
+            read -n 1 -s char
+
+            if [ -z "${char:-}" ]
+            then
+                if [ -n "${next}" ]
+                then
+                    char=f
+                else
+                    char=q
+                fi
+            fi
+
+            case "${char,,}" in
+                f)
+                    [ -z "${next}" ] && unset char
+                    ;;
+                b)
+                    [ -z "${prev}" ] && unset char
+                    ;;
+                q)
+                    ;;
+                *)
+                    unset char
+                    ;;
+            esac
+        done
+
+        echo "${char,,}"
+    }
+
+    local query_result
+
+    while query_result="$(query "${@}")"
+    do
+        echo "${query_result}" | render | colorize "${@}" | less -R
+
+        case "$(read_char "${query_result}")" in
+            f)
+                PAGE=$((${PAGE} + 1))
+                ;;
+            b)
+                PAGE=$((${PAGE} - 1))
+                ;;
+            *)
+                break
+                ;;
+        esac
+    done
+}
+
+function output() {
+    query "${@}" | render | colorize "${@}" > "${OUTPUT}"
+}
+
+function query() {
+    curl -LSs "$(url "${@}")"
+}
+
+function render() {
+    sed -e "1,/${EOW_RENDER_BEGIN}/d" -e "/${EOW_RENDER_END}/,\$d" |
+    w3m -dump -T 'text/html'
+}
+
+function url() {
+    printf "${EOW_URL_FORMAT}" "$(echo "${@}" | encode)" "${PAGE:-1}"
+}
+
+COLORLIZE=
+PAGE=1
+SUBCOMMAND=navigate
+
+while getopts 'cho:p:' OPT
+do
+    case "${OPT}" in
+        c)
+            COLORLIZE=yes
+            ;;
+        h)
+            help
+            exit
+            ;;
+        o)
+            SUBCOMMAND=output
+            OUTPUT="${OPTARG}"
+            ;;
+        p)
+            PAGE="${OPTARG}"
+            ;;
+    esac
+done
+
+shift $((OPTIND - 1))
+
+"${SUBCOMMAND}" "${1}" "${@:2}"
