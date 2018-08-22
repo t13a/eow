@@ -34,13 +34,6 @@ function colorize() {
     "${sed_args[@]}"
 }
 
-function encode() {
-    sed \
-    -e 's/ /+/g' \
-    -e 's/&/%26/g' \
-    -e 's/?/%3F/g'
-}
-
 function help() {
     cat << EOF
 $0 [OPTION]... KEYWORD
@@ -139,6 +132,14 @@ function render() {
 }
 
 function url() {
+
+    function encode() {
+        sed \
+        -e 's/ /+/g' \
+        -e 's/&/%26/g' \
+        -e 's/?/%3F/g'
+    }
+
     printf "${EOW_URL_FORMAT}" "$(echo "${@}" | encode)" "${PAGE:-1}"
 }
 
